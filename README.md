@@ -11,15 +11,24 @@ to change on the production server. It was split out of the bds_back_v2 backend 
 1. Install Node >= 18 and git. Clone this repo (for example to `C:\mse-history-fallback`) and run `npm ci`.
 2. `copy .env.example .env` (Linux: `cp`) and fill it in. `.env` is git-ignored and holds real secrets: keep it that way.
    `DB_TIMEZONE=+08:00` must match production. Take the SMTP lines from production so the alert goes through the same relay.
-3. On production MySQL, as an admin, by hand (not through the app):
+3. Network. The runner has two LAN ports: port A goes straight to the production server (a private link, no gateway),
+   port B is the LAN whose IP MSE allows (default gateway, internet). So:
+   - `DB_HOST` is production's address on the direct link (port A), never its public or LAN address.
+   - On production, MySQL must listen on that link's address (`bind-address`), and its firewall opens 3306 on that
+     interface only.
+   - On the runner, give port A an address in the link's subnet and NO default gateway. Port B keeps the default
+     route, otherwise MSE calls leave from the wrong IP and are refused. Check with `route print` (Linux `ip route`):
+     one default route, via port B.
+   - Check both paths from the runner: a TCP connect to `<prod link address>:3306` succeeds, and MSE's login answers 200
+     (a 401/403/timeout means the call left from an IP MSE does not allow).
+4. On production MySQL, as an admin, by hand (not through the app), using the runner's address on the direct link:
 
 ```sql
-CREATE USER 'mse_fallback'@'<runner IP>' IDENTIFIED BY '<strong password>';
-GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO 'mse_fallback'@'<runner IP>';
+CREATE USER 'mse_fallback'@'<runner address on the direct link>' IDENTIFIED BY '<strong password>';
+GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO 'mse_fallback'@'<runner address on the direct link>';
 ```
 
-   Port 3306 must be open from the runner to production (allowlist the runner IP only).
-4. Run `SHOW CREATE TABLE _securitytradingstatus_history` on production and compare it with
+5. Run `SHOW CREATE TABLE _securitytradingstatus_history` on production and compare it with
    `src/models/_securitytradingstatus_history.js` (dry run does not exercise the write path).
 
 ## Dry run first
