@@ -21,6 +21,12 @@ assert.strictEqual(db._securitytradingstatus_history.tableName, '_securitytradin
 assert.strictEqual(db._securitytradingstatus_history.sequelize, db.sequelize)
 assert.ok(db._securitytradingstatus_history.rawAttributes.MarketSegmentID)
 
+// the MSE tables add-on's models share that connection
+for (const name of ['mse_company', 'mse_index_daily', 'mse_top20_point', 'mse_orderbook_snapshot']) {
+  assert.strictEqual(db[name].tableName, name)
+  assert.strictEqual(db[name].sequelize, db.sequelize)
+}
+
 // a missing variable throws an error naming it, with none of the values
 for (const name of ['DB_HOST', 'DB_DATABASE', 'DB_USERNAME', 'DB_TIMEZONE']) {
   const env = { ...ENV }

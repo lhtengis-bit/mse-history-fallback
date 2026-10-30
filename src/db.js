@@ -1,4 +1,4 @@
-// Builds the Sequelize connection and the one model the fallback writes. Nothing connects until the first query.
+// Builds the Sequelize connection and the models the fallback and the tables run write. Nothing connects until the first query.
 const { Sequelize, DataTypes } = require('sequelize')
 
 const REQUIRED = ['DB_HOST', 'DB_DATABASE', 'DB_USERNAME', 'DB_TIMEZONE']
@@ -16,7 +16,8 @@ function createDb(env = process.env) {
     logging: false,
   })
   const _securitytradingstatus_history = require('./models/_securitytradingstatus_history')(sequelize, DataTypes)
-  return { sequelize, _securitytradingstatus_history }
+  const mseTables = require('./models/mse_tables')(sequelize, DataTypes)
+  return { sequelize, _securitytradingstatus_history, ...mseTables }
 }
 
 module.exports = { createDb }

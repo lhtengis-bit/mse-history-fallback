@@ -56,6 +56,48 @@ npm run backfill -- --from 2026-10-21 --to 2026-10-22
 - No alert mail; the log shows one summary line per day. Exit 1 if any day failed (MSE unreachable, write failed).
 - Safe to repeat: rows already stored with the same volume are left alone.
 
+## MSE tables (company info, indexes, Top 20 graph, order book)
+
+A second script on the same runner, same `.env`, same tunnel. It calls MSE's four non-trading endpoints itself (this runner
+is the only machine MSE answers) and stores each in its own table. Nothing here touches `_securitytradingstatus_history`.
+
+| Endpoint | Table | Write rule |
+|---|---|---|
+| `companyinfo` | `mse_company` | upsert on `symbol` |
+| `security_index` | `mse_index_daily` | upsert on `(index_name, trade_date)` |
+| `top20_index_graph` | `mse_top20_point` | each trade date in the answer is deleted and re-inserted in one transaction (MSE repeats some seconds, so there is no natural key); a date the answer does not carry is never touched |
+| `orderbook` | `mse_orderbook_snapshot` | append only, unique on `(md_entry_id, date_time)`: an order state already stored is skipped, a changed order is a new row |
+
+Setup, once, on production MySQL (by hand, as an admin):
+
+1. Run `sql/2026-10-30-mse-tables.sql` (MySQL Workbench: set production's database as default schema, run the whole script; safe to run twice).
+2. Let the fallback user write to the four tables. It needs DELETE here (Top 20 day replace), which the history table never gets:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON <database>.`mse_company` TO 'mse_fallback'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON <database>.`mse_index_daily` TO 'mse_fallback'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON <database>.`mse_top20_point` TO 'mse_fallback'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON <database>.`mse_orderbook_snapshot` TO 'mse_fallback'@'localhost';
+```
+
+   Repeat the four with `'mse_fallback'@'127.0.0.1'`.
+
+```
+npm run tables -- --dry-run
+npm run tables
+```
+
+- Dry run first: it calls the four endpoints, parses them and logs `rows=` / `skipped=` per endpoint, writes nothing and sends no mail.
+- One log line per endpoint: `tables <endpoint> status=ok|dry-run|mse-unreachable|write-failed rows=N skipped=N`. One endpoint failing does not stop the others.
+- Exit 0 done, 1 an endpoint failed or the run crashed (one alert mail, same address as the fallback), 2 MSE login or database settings missing.
+- Safe to repeat: the same answer changes nothing. `skipped` counts rows missing a field the table needs (it should stay 0).
+- Schedule it at 14:15 and 21:35, Monday to Friday, clear of the fallback's 16:20 and 21:20 (all of them use the tunnel's one local port, so never run two at once):
+
+```
+15 14 * * 1-5 cd /opt/mse-history-fallback && node src/tables.js >> /var/log/mse-tables.log 2>&1
+35 21 * * 1-5 cd /opt/mse-history-fallback && node src/tables.js >> /var/log/mse-tables.log 2>&1
+```
+
 ## Schedule (16:20 and 21:20 Ulaanbaatar time, Monday to Friday)
 
 The machine clock must be Ulaanbaatar time, or shift the times.
@@ -73,7 +115,7 @@ Linux (crontab, machine on Asia/Ulaanbaatar time):
 20 16,21 * * 1-5 cd /opt/mse-history-fallback && node src/run.js >> /var/log/mse-fallback.log 2>&1
 ```
 
-## Exit codes
+## Exit codes (`run.js` and `backfill.js`; `tables.js` is described in its section)
 
 - 0: ran fine (healthy, repaired, flagged, dry run, non-trading day)
 - 1: MSE unreachable, the DB write failed, or the run crashed
