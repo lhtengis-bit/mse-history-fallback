@@ -2,8 +2,8 @@
 
 Fills `_securitytradingstatus_history` from MSE's live datafeed (`security_trading`) when the server-side feed missed
 rows. MSE answers only from allowlisted IPs and production's IP cannot be added, so this runs as a one-shot script on a
-separate always-on machine that MSE accepts, and writes straight into production MySQL over the network. Nothing needs
-to change on the production server. It was split out of the bds_back_v2 backend and has no dependency on it.
+separate always-on machine that MSE accepts, and writes into production MySQL through an SSH tunnel. Nothing needs
+to change on the production server except one MySQL user. It was split out of the bds_back_v2 backend and has no dependency on it.
 (`src/historyWriteLock.js` is kept as reviewed; it only guards this process and protects nothing across processes.)
 
 ## Setup (once, on the runner)
@@ -11,21 +11,25 @@ to change on the production server. It was split out of the bds_back_v2 backend 
 1. Install Node >= 18 and git. Clone this repo (for example to `C:\mse-history-fallback`) and run `npm ci`.
 2. `copy .env.example .env` (Linux: `cp`) and fill it in. `.env` is git-ignored and holds real secrets: keep it that way.
    `DB_TIMEZONE=+08:00` must match production. Take the SMTP lines from production so the alert goes through the same relay.
-3. Network. The runner has two LAN ports: port A goes straight to the production server (a private link, no gateway),
-   port B is the LAN whose IP MSE allows (default gateway, internet). So:
-   - `DB_HOST` is production's address on the direct link (port A), never its public or LAN address.
-   - On production, MySQL must listen on that link's address (`bind-address`), and its firewall opens 3306 on that
-     interface only.
-   - On the runner, give port A an address in the link's subnet and NO default gateway. Port B keeps the default
-     route, otherwise MSE calls leave from the wrong IP and are refused. Check with `route print` (Linux `ip route`):
-     one default route, via port B.
-   - Check both paths from the runner: a TCP connect to `<prod link address>:3306` succeeds, and MSE's login answers 200
-     (a 401/403/timeout means the call left from an IP MSE does not allow).
-4. On production MySQL, as an admin, by hand (not through the app), using the runner's address on the direct link:
+3. Network: an SSH tunnel to production, the same way MySQL Workbench connects ("Standard TCP/IP over SSH"). The script
+   opens it itself on every run, from `.env`; there is nothing to install or keep running. Production's MySQL listens on
+   localhost only and stays that way; nothing on production changes except one MySQL user (step 4).
+   - Set `SSH_HOST` (production's address, for example its Tailscale 100.68.x.x), `SSH_USERNAME` and `SSH_PASSWORD`
+     (the same login Workbench uses), and `DB_HOST=127.0.0.1` with `DB_PORT=13306` (the local end of the tunnel,
+     any free port). Optional: `SSH_PORT` (22) and `SSH_REMOTE_PORT` (3306, MySQL's port on production).
+   - Leave `SSH_HOST` out and the script connects to `DB_HOST:DB_PORT` directly instead.
+   - SSH login and the tunnel are checked at run time: a wrong password or an unreachable host fails the run with exit 1
+     and a "run crashed" mail naming only `SshTunnelError` and a code (`client-authentication`, `ECONNREFUSED`,
+     `client-timeout`). A missing `SSH_USERNAME` / `SSH_PASSWORD` exits 2.
+   - Check MSE's login answers 200 from the runner (a 401/403/timeout means the call left from an IP MSE does not allow).
+4. On production MySQL, as an admin, by hand (not through the app). Connections arrive through the tunnel from
+   localhost, so the user is for `localhost` (and `127.0.0.1`, in case name resolution is off):
 
 ```sql
-CREATE USER 'mse_fallback'@'<runner address on the direct link>' IDENTIFIED BY '<strong password>';
-GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO 'mse_fallback'@'<runner address on the direct link>';
+CREATE USER 'mse_fallback'@'localhost' IDENTIFIED BY '<strong password>';
+CREATE USER 'mse_fallback'@'127.0.0.1' IDENTIFIED BY '<strong password>';
+GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO 'mse_fallback'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO 'mse_fallback'@'127.0.0.1';
 ```
 
 5. Run `SHOW CREATE TABLE _securitytradingstatus_history` on production and compare it with

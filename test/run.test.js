@@ -11,12 +11,12 @@ const path = require('path')
 const CREDS = { MSE_API_USER: 'u-secret', MSE_API_PASS: 'p-secret' }
 const NOW = new Date('2026-10-12T08:20:00Z')
 
-function harness({ env = CREDS, argv = [], run, closeError, mailError } = {}) {
-  const h = { logs: [], runCalls: [], closeCalls: 0, mails: [] }
+function harness({ env = CREDS, argv = [], run, closeError, mailError, openTunnel } = {}) {
+  const h = { logs: [], runCalls: [], closeCalls: 0, mails: [], order: [] }
   h.db = { sequelize: { close: async () => { h.closeCalls++; if (closeError) throw closeError } } }
   h.sendMail = async (m) => { h.mails.push(m); if (mailError) throw mailError }
   h.run = async (args) => { h.runCalls.push(args); return run ? run(args) : { status: 'healthy' } }
-  h.exec = () => main({ db: h.db, env, log: (l) => h.logs.push(l), run: h.run, sendMail: h.sendMail, argv, now: NOW })
+  h.exec = () => main({ db: h.db, env, log: (l) => h.logs.push(l), run: h.run, sendMail: h.sendMail, argv, now: NOW, openTunnel })
   return h
 }
 
@@ -133,6 +133,33 @@ function harness({ env = CREDS, argv = [], run, closeError, mailError } = {}) {
   h = harness({ mailError: new Error('smtp down'), closeError: new Error('close boom'), run: async () => { throw boom } })
   assert.strictEqual(await h.exec(), 1)
 
+  // SSH tunnel: opened before the run, closed after the database, also when the run throws or reports failure
+  const tunnelOf = (order, closeThrows) => async () => { order.push('open'); return { close: () => { order.push('tunnel-close'); if (closeThrows) throw new Error('x') } } }
+  const order = []
+  h = harness({ openTunnel: tunnelOf(order), run: async () => { order.push('run'); return { status: 'healthy' } } })
+  h.db.sequelize.close = async () => { order.push('db-close') }
+  assert.strictEqual(await h.exec(), 0)
+  assert.deepStrictEqual(order, ['open', 'run', 'db-close', 'tunnel-close'])
+  for (const run of [async () => { throw boom }, async () => ({ status: 'write-failed' })]) {
+    const o = []
+    h = harness({ openTunnel: tunnelOf(o, true), run })
+    assert.strictEqual(await h.exec(), 1)
+    assert.ok(o.includes('tunnel-close'))
+  }
+  // missing MSE login: the tunnel is never opened
+  const o2 = []
+  h = harness({ env: {}, openTunnel: tunnelOf(o2) })
+  assert.strictEqual(await h.exec(), 2)
+  assert.deepStrictEqual(o2, [])
+  // tunnel fails: no run, db closed, one crash mail with name and code only, exit 1
+  h = harness({ openTunnel: async () => { throw Object.assign(new Error('auth failed for user-secret@host-secret'), { name: 'SshTunnelError', code: 'client-authentication' }) } })
+  assert.strictEqual(await h.exec(), 1)
+  assert.strictEqual(h.runCalls.length, 0)
+  assert.strictEqual(h.closeCalls, 1)
+  assert.deepStrictEqual(h.logs, ['run failed: SshTunnelError code=client-authentication'])
+  assert.strictEqual(h.mails.length, 1)
+  assert.ok(h.mails[0].html.includes('SshTunnelError client-authentication') && !/secret/.test(h.mails[0].html))
+
   // the real entry point, in a directory without a .env: a missing database variable exits 2 with a fixed line naming it
   const RUN = path.join(__dirname, '..', 'src', 'run.js')
   const entry = (env) => spawnSync(process.execPath, [RUN], { cwd: os.tmpdir(), env: { ...env, PATH: process.env.PATH }, encoding: 'utf8' })
@@ -148,6 +175,11 @@ function harness({ env = CREDS, argv = [], run, closeError, mailError } = {}) {
   r = entry({ DB_HOST: 'host-secret.invalid', DB_USERNAME: 'user-secret', DB_DATABASE: 'db-secret', DB_TIMEZONE: '+08:00' })
   assert.strictEqual(r.status, 2)
   assert.ok(/MSE_API_USER/.test(r.stdout) && !/secret/.test(r.stdout + r.stderr), r.stdout + r.stderr)
+
+  // SSH_HOST set but its login incomplete: exit 2 naming the variable, no value
+  r = entry({ DB_HOST: '127.0.0.1', DB_PORT: '13306', DB_USERNAME: 'user-secret', DB_DATABASE: 'db-secret', DB_TIMEZONE: '+08:00', SSH_HOST: 'host-secret.invalid', SSH_PASSWORD: 'pass-secret' })
+  assert.strictEqual(r.status, 2)
+  assert.ok(/^\S+ environment variable SSH_USERNAME is not set\n$/.test(r.stdout) && !/secret/.test(r.stdout + r.stderr), r.stdout + r.stderr)
 
   console.log('runMseHistoryFallback tests pass')
 })().catch((e) => { console.error(e); process.exit(1) })
