@@ -13,19 +13,20 @@ const DEFAULT_RETRY_AFTER_SECONDS = 120
 const SAFETY_MARGIN_SECONDS = 5
 
 // One call, one outcome: { res } on a response, { reason } when the client threw.
-async function attempt(client) {
+async function attempt(client, endpoint, query) {
   try {
-    return { res: await client.call('security_trading') }
+    return { res: await client.call(endpoint, query) }
   } catch (e) {
     return { reason: e.message }
   }
 }
 
-async function fetchMseLiveRows(client, { sleep }) {
-  let { res, reason } = await attempt(client)
+// By default today's live rows; a past date is read from security_trading_history?date=.
+async function fetchMseLiveRows(client, { sleep, endpoint = 'security_trading', query }) {
+  let { res, reason } = await attempt(client, endpoint, query)
   if (res && res.status === 429) {
     await sleep(((res.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_SECONDS) + SAFETY_MARGIN_SECONDS) * 1000);
-    ({ res, reason } = await attempt(client))
+    ({ res, reason } = await attempt(client, endpoint, query))
   }
   if (!res) return { ok: false, reason }
   if (res.status !== 200) return { ok: false, reason: `HTTP ${res.status}` }
@@ -107,8 +108,9 @@ const statusOf = (p) => {
   return p.qualifyingCount === 0 ? 'non-trading-day' : 'healthy'
 }
 
-async function runHistoryFallback({ db, client, now, log = console.log, sendMail, sleep = defaultSleep, lock = historyWriteLock, dryRun = false, alertEmail = DEFAULT_ALERT_EMAIL }) {
-  const runDate = moment(now).tz('Asia/Ulaanbaatar').format('YYYY-MM-DD')
+async function runHistoryFallback({ db, client, now, log = console.log, sendMail, sleep = defaultSleep, lock = historyWriteLock, dryRun = false, alertEmail = DEFAULT_ALERT_EMAIL, date }) {
+  // date (YYYY-MM-DD): repair that finished day from MSE's history call instead of today from the live call
+  const runDate = date || moment(now).tz('Asia/Ulaanbaatar').format('YYYY-MM-DD')
   const table = db._securitytradingstatus_history
 
   const finish = async (summary, detailLines = []) => {
@@ -126,7 +128,7 @@ async function runHistoryFallback({ db, client, now, log = console.log, sendMail
   }
 
   // Never hold the lock here: this call may wait out MSE's rate limit.
-  const fetched = await fetchMseLiveRows(client, { sleep })
+  const fetched = await fetchMseLiveRows(client, date ? { sleep, endpoint: 'security_trading_history', query: { date } } : { sleep })
   if (!fetched.ok) return finish(summarise(runDate, 'mse-unreachable', EMPTY_PLAN, fetched.reason))
   const mseRows = fetched.rows.filter((r) => r && typeof r === 'object')
 

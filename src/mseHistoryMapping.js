@@ -4,11 +4,12 @@ const moment = require('moment-timezone')
 
 const TIME_FORMAT = 'YYYY-MM-DD HH:mm:ss'
 
-// MSE sends Ulaanbaatar time (UTC+8); the history table stores UTC.
-const toUtcEntryTime = (local) => {
+// MSE sends Ulaanbaatar time and the history table stores it as it comes (trade_realtime posts the live table's local time unchanged:
+// every stored day ends at 12:59:xx, not 04:59:xx), so there is no conversion; the format is only validated.
+const toEntryTime = (local) => {
   const parsed = moment.utc(local, TIME_FORMAT, true)
   if (!parsed.isValid()) throw new Error(`invalid md_entry_time: ${local}`)
-  return parsed.subtract(8, 'hours').format(TIME_FORMAT)
+  return parsed.format(TIME_FORMAT)
 }
 
 // A history row stores every value as a string. null, undefined, empty or non-numeric gives '0'.
@@ -19,7 +20,7 @@ const formatNumber = (value) => {
   return String(Number(n.toFixed(6)))
 }
 
-// Fresh means a full, strictly formatted time dated the run date, so a row that passes can always go through toUtcEntryTime.
+// Fresh means a full, strictly formatted time dated the run date, so a row that passes can always go through toEntryTime.
 const isFresh = (row, runDate) => typeof row.md_entry_time === 'string' && moment.utc(row.md_entry_time, TIME_FORMAT, true).isValid() && row.md_entry_time.slice(0, 10) === runDate
 
 const qualifies = (row, runDate) => {
@@ -39,7 +40,7 @@ const toCoreFields = (row) => {
     Volume: formatNumber(row.traded_volume),
     PreviousClose: formatNumber(row.previous_closing_price),
     Turnover: formatNumber(row.traded_value),
-    MDEntryTime: toUtcEntryTime(row.md_entry_time),
+    MDEntryTime: toEntryTime(row.md_entry_time),
   }
   if (row.security_type !== null && row.security_type !== undefined && row.security_type !== '') fields.securityType = String(row.security_type)
   return fields
@@ -52,4 +53,4 @@ const toOrderBookFields = (row) => ({
   LowestOfferPrice: formatNumber(row.lowest_offer_price),
 })
 
-module.exports = { toUtcEntryTime, formatNumber, isFresh, qualifies, toCoreFields, toOrderBookFields }
+module.exports = { toEntryTime, formatNumber, isFresh, qualifies, toCoreFields, toOrderBookFields }

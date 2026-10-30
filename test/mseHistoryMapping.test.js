@@ -1,12 +1,13 @@
 // node test/mseHistoryMapping.test.js   (plain assert, no framework)
 // The rows below are real MSE rows (history call of 2026-10-22, live call of 2026-10-23).
 const assert = require('assert')
-const { toUtcEntryTime, formatNumber, isFresh, qualifies, toCoreFields, toOrderBookFields } = require('../src/mseHistoryMapping')
+const { toEntryTime, formatNumber, isFresh, qualifies, toCoreFields, toOrderBookFields } = require('../src/mseHistoryMapping')
 
 try {
-  // --- toUtcEntryTime: Ulaanbaatar time minus exactly 8 hours
-  assert.strictEqual(toUtcEntryTime('2026-10-22 12:59:57'), '2026-10-22 04:59:57')
-  assert.strictEqual(toUtcEntryTime('2026-10-23 03:30:00'), '2026-10-22 19:30:00')
+  // --- toEntryTime: Ulaanbaatar time, stored as it comes (the table's rows end at 12:59:xx); a malformed time throws
+  assert.strictEqual(toEntryTime('2026-10-22 12:59:57'), '2026-10-22 12:59:57')
+  assert.strictEqual(toEntryTime('2026-10-23 03:30:00'), '2026-10-23 03:30:00')
+  assert.throws(() => toEntryTime('2026-10-22T12:59:57'))
 
   // --- formatNumber: at most 6 decimals, no trailing zeros, null or undefined is '0' (never 'null' or 'NaN')
   assert.strictEqual(formatNumber(393.9070129394531), '393.907013')
@@ -18,7 +19,7 @@ try {
 
   // --- toCoreFields / toOrderBookFields
   const row = { symbol: 'MSE-O-0000', md_sub_order_book_type: 'Regular', opening_price: 395, closing_price: 394.33, high_price: 397.99, low_price: 390, vwap: 393.9070129394531, traded_volume: 89612, highest_bid_price: 396.77, lowest_offer_price: 396.78, previous_closing_price: 390.47, md_entry_time: '2026-10-22 12:59:57', buy_order_qty: 14, sell_order_qty: 258, traded_value: 35298763.62, security_type: 'CS' }
-  assert.deepStrictEqual(toCoreFields(row), { OpeningPrice: '395', ClosingPrice: '394.33', HighPrice: '397.99', LowPrice: '390', VWAP: '393.907013', Volume: '89612', PreviousClose: '390.47', Turnover: '35298763.62', MDEntryTime: '2026-10-22 04:59:57', securityType: 'CS' })
+  assert.deepStrictEqual(toCoreFields(row), { OpeningPrice: '395', ClosingPrice: '394.33', HighPrice: '397.99', LowPrice: '390', VWAP: '393.907013', Volume: '89612', PreviousClose: '390.47', Turnover: '35298763.62', MDEntryTime: '2026-10-22 12:59:57', securityType: 'CS' })
   assert.ok(!('securityType' in toCoreFields({ ...row, security_type: null })), 'a null security type is omitted')
   assert.ok(!('securityType' in toCoreFields({ ...row, security_type: '' })), 'an empty security type is omitted')
   assert.deepStrictEqual(toOrderBookFields(row), { BuyOrderQty: '14', SellOrderQty: '258', HighestBidPrice: '396.77', LowestOfferPrice: '396.78' })

@@ -40,6 +40,22 @@ GRANT SELECT, INSERT, UPDATE ON <database>.`_securitytradingstatus_history` TO '
 `npm run dry-run` on a trading day after 16:20. It prints a summary line and one line per row it would insert or update,
 writes nothing and sends no mail. Compare with the feed's table. When one day looks right, schedule the real run.
 
+## Backfill past days
+
+The scheduled run only repairs today. For days that already passed (a frozen feed, a missed run) use the backfill, which
+reads MSE's finished-day call (`security_trading_history?date=`) and applies the same rules:
+
+```
+npm run backfill -- --from 2026-10-21 --to 2026-10-22 --dry-run
+npm run backfill -- --from 2026-10-21 --to 2026-10-22
+```
+
+- Dry run first: it prints what it would insert or update per day and writes nothing. Then run without `--dry-run`.
+- Weekdays only, oldest first, one MSE call per day; MSE allows one per 120 s, so each day takes about two minutes.
+- `--to` is optional (one day). Today and the future are refused; the scheduled run does today.
+- No alert mail; the log shows one summary line per day. Exit 1 if any day failed (MSE unreachable, write failed).
+- Safe to repeat: rows already stored with the same volume are left alone.
+
 ## Schedule (16:20 and 21:20 Ulaanbaatar time, Monday to Friday)
 
 The machine clock must be Ulaanbaatar time, or shift the times.

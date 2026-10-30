@@ -32,7 +32,7 @@ try {
     assert.strictEqual(ins.Symbol, 'MSE-O-0000')
     assert.strictEqual(ins.MDSubOrderBookType, 'Regular')
     assert.strictEqual(ins.dates, RUN)
-    assert.strictEqual(ins.MDEntryTime, '2026-10-23 04:59:57')
+    assert.strictEqual(ins.MDEntryTime, '2026-10-23 12:59:57')
     assert.strictEqual(r.qualifyingCount, 1)
   }
 
