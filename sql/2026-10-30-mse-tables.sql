@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS mse_orderbook_snapshot (
   md_sub_order_book_type VARCHAR(30)     NOT NULL,
   md_entry_type          TINYINT         NOT NULL COMMENT '0 or 1, as sent',
   md_entry_position_no   INT             NULL,
-  md_entry_id            VARCHAR(40)     NOT NULL,
+  md_entry_id            VARCHAR(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'case-sensitive: ids differing only by case are different orders',
   md_entry_px            DECIMAL(18,4)   NOT NULL,
   md_entry_size          BIGINT          NOT NULL,
   number_of_orders       INT             NULL,

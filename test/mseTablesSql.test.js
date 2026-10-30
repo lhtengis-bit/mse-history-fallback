@@ -27,6 +27,8 @@ try {
   assert.ok(/UNIQUE KEY uq_mse_index_daily \(index_name, trade_date\)/.test(sql))
   assert.ok(/UNIQUE KEY uq_mse_orderbook_entry \(md_entry_id, date_time\)/.test(sql))
   assert.ok(!/UNIQUE KEY[^\n]*trade_time/.test(sql), 'top20 points must not be unique on time')
+  // MSE order ids are case-sensitive (O0TIXYqEQTNZ and O0TIXYqEQTNz are two orders); a case-insensitive collation made INSERT IGNORE drop 3 of 1521 rows
+  assert.ok(/md_entry_id\s+VARCHAR\(40\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/.test(sql), 'md_entry_id must use a binary collation')
   // nothing a MySQL below 8.0 cannot run
   assert.ok(!/\bWITH\b|\bOVER\s*\(|\bLAG\s*\(/i.test(sql.replace(/--[^\n]*/g, '')))
 
